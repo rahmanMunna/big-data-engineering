@@ -646,14 +646,109 @@ After completing this lab, I understand:
 
 ---
 
-## 15. Next Learning Steps
 
-The next planned experiments are:
+## 15. Experiment: DataNode Failure and Recovery
 
-1. Simulate DataNode failure and observe HDFS behavior.
-2. Restore the DataNode and observe replica recovery.
-3. Understand HDFS data ingestion using Python.
-4. Explore how large datasets are organized in a data lake.
-5. Move toward distributed data processing using Apache Spark.
+### Objective
 
-**Final takeaway:** This lab introduced the fundamentals of distributed storage. The next goal is to use this infrastructure to solve actual data engineering problems rather than just execute Hadoop commands.
+Test HDFS fault tolerance by stopping one DataNode and checking whether stored files remain accessible.
+
+### Initial State
+
+- Two DataNodes running.
+- Replication factor: 2.
+- `bigfile.bin`: 3 logical blocks.
+- Each block has two replicas.
+
+### Step 1: Stop DataNode 1
+
+Executed from Windows PowerShell:
+
+```powershell
+docker stop datanode1
+```
+
+### Step 2: Inspect cluster status
+
+```powershell
+docker exec namenode hdfs dfsadmin -report
+```
+
+Observed one live DataNode.
+
+### Step 3: Test data availability
+
+```powershell
+docker exec namenode hdfs dfs -cat /data/raw/trips.csv
+```
+
+**Result:** The CSV file remained readable.
+
+Reason: DataNode 2 still contained a complete copy of the file's blocks.
+
+### Step 4: Inspect block replication
+
+```powershell
+docker exec namenode hdfs fsck /data/raw/bigfile.bin -files -blocks -locations
+```
+
+Important output:
+
+```text
+Live_repl=1
+Live_repl=1
+Live_repl=1
+
+Under-replicated blocks: 3
+Missing blocks: 0
+Corrupt blocks: 0
+```
+
+**Observation:**
+
+- All three blocks had only one available replica.
+- No data blocks were completely missing.
+- The file remained readable.
+- The desired replication factor of two was not satisfied.
+
+### Step 5: Restore DataNode 1
+
+```powershell
+docker start datanode1
+```
+
+Waited for DataNode 1 to rejoin the cluster.
+
+### Step 6: Verify recovery
+
+```powershell
+docker exec namenode hdfs dfsadmin -report
+```
+
+```powershell
+docker exec namenode hdfs fsck /data/raw/bigfile.bin -files -blocks -locations
+```
+
+Final observed output:
+
+```text
+Live_repl=2
+Live_repl=2
+Live_repl=2
+
+Under-replicated blocks: 0
+Missing blocks: 0
+Corrupt blocks: 0
+
+Status: HEALTHY
+```
+
+### Engineering Observations
+
+1. HDFS can maintain data availability when one DataNode fails, provided another replica survives.
+2. A block becomes under-replicated when its available replica count is lower than the configured replication factor.
+3. A missing block means no available replica can provide that block.
+4. Restoring a DataNode with its persistent storage allows its existing blocks to become available again.
+5. In a larger cluster, HDFS can replicate surviving blocks to other healthy DataNodes when a node is permanently lost.
+
+**Important:** This experiment demonstrated recovery after restarting a DataNode with its persistent volume intact. It did not simulate permanent disk loss or replacement-node replication.
